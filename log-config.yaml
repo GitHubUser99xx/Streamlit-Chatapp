@@ -1,0 +1,19 @@
+version: 1
+disable_existing_loggers: false
+
+formatters:
+  default:
+    format: "%(levelname)-9s [%(asctime)9s - %(module)s]: %(message)s"
+    datefmt: "%a, %Y-%m-%d %H:%M:%S %z"
+
+handlers:
+  console:
+    class: logging.StreamHandler
+    formatter: default
+    level: DEBUG
+    stream: ext://sys.stdout
+
+loggers:
+  basic:
+    handlers:
+      - console
