@@ -1,20 +1,12 @@
-import logging
-import logging.config
-
 import streamlit as st
-import yaml
 from langchain_community.chat_message_histories import \
     StreamlitChatMessageHistory
 from langchain_community.chat_models.ollama import ChatOllama
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts.chat import ChatPromptTemplate
-from langchain_core.runnables import (RunnableSequence,
-                                      RunnableWithMessageHistory)
+from langchain_core.runnables import RunnableWithMessageHistory
 
-with open("log-config.yaml", "r") as f:
-    logging.config.dictConfig(yaml.load(f, yaml.SafeLoader))
-    basic_logger = logging.getLogger("basic")
-    basic_logger.setLevel(logging.DEBUG)
+from logger import basic_logger
 
 
 @st.cache_resource
@@ -24,15 +16,14 @@ def build_chain(url: str, model: str, temperature: float):
         basic_logger.critical("Ollama Parameters contain NoneType")
         return
     
-    basic_logger.debug("Loading ChatPromptTemplate")
+    # Load the Chain
     chat_template = ChatPromptTemplate.from_messages([
         ("system", "Your task is to answer the user's queries as accurately as possible."),
         ("placeholder", "{chat_history}"),
         ("user", "{input}")
     ])
     
-    basic_logger.debug("Loading ChatOllama")
-    basic_logger.debug(f"Using params: {dict(host=url, model=model, temperature=temperature)}")
+    basic_logger.debug(f"Ollama Params: {dict(host=url, model=model, temperature=temperature)}")
     llm = ChatOllama(
         base_url=url,
         model=model,
@@ -41,18 +32,11 @@ def build_chain(url: str, model: str, temperature: float):
         keep_alive=3600
     )
     
-    basic_logger.debug("Loading RunnableSequence")
-    conversation_chain = RunnableSequence(
-        chat_template,
-        llm,
-        StrOutputParser(),
-        name="Chain-Conversation"
-    )
-    
-    basic_logger.debug("Loading RunnableWithMessageHistory")
     memory_chain = RunnableWithMessageHistory(
-        conversation_chain,
+        chat_template | llm | StrOutputParser(),
         lambda x: StreamlitChatMessageHistory("chat_history")
     )
     
+    basic_logger.debug("Successfully loaded the chain to streamlit session_state")
+    st.session_state["chain"] = memory_chain    
     return memory_chain
