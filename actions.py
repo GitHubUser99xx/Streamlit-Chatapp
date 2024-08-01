@@ -1,79 +1,62 @@
-from typing import Iterator, Optional
-
+import requests
 import streamlit as st
-
-from logger import basic_logger
-from chatbot import build_chain
-
-def user_submits_model_config():
-    basic_logger.debug("Submit Button pressed. Adding Parameters to Session")
-    build_chain(
-        url=st.session_state.get("HOST"),
-        model=st.session_state.get("MODEL"),
-        temperature=st.session_state.get("TEMPERATURE")
-    )
+from langchain_community.chat_message_histories import \
+    StreamlitChatMessageHistory
+from langchain_community.chat_models.ollama import ChatOllama
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts.chat import ChatPromptTemplate
+from langchain_core.runnables import RunnableWithMessageHistory
 
 
-def user_clears_chat_history():
-    basic_logger.debug("Deleting Chat History")
-    st.session_state.pop("chat_history")
+@st.cache_resource
+def build_chain(url: str, model: str, temperature: float):
+    if any(item is None for item in [url, model, temperature]):
+        st.error('Invalid Ollama Parameters')
+        
+    chat_template = ChatPromptTemplate.from_messages([
+        ("system", "Your task is to answer the user's queries as accurately as possible."),
+        ("placeholder", "{chat_history}"),
+        ("user", "{input}")
+    ])
     
-
-def ai_generates_response():
-    # retrieve the conversation chain & user input
-    chatbot = st.session_state.get("chain")
-    user_input = st.session_state.get("user_input")
-    
-    # generate response
-    return chatbot.stream(
-        {"input": user_input},
-        config={"configurable": {"session_id": st.session_state.get("session_id")}}
+    llm = ChatOllama(
+        base_url = url,
+        model = model,
+        temperature = temperature,
+        timeout = 600,
+        keep_alive = 3600
     )
     
-
-def user_submits_message():
-    # retrieve the chatbot
-    response = ai_generates_response()
+    memory_chain = RunnableWithMessageHistory(
+        chat_template | llm | StrOutputParser(),
+        lambda x: StreamlitChatMessageHistory('langchain_messages')
+    )
+    return memory_chain
     
-    # display the response
-    with st.container():
-        with st.chat_message("assistant"):
-            st.write_stream(response)
+
+def get_response():
+    chain = build_chain(
+        url = st.session_state.get('HOST'),
+        model = st.session_state.get('MODEL'),
+        temperature = st.session_state.get('TEMPERATURE')
+    )
+    response = chain.stream(
+        {'input': st.session_state.get('user_input')},
+        config = {'configurable': {'session_id': st.session_state.get('session_id')}}
+    )
+    st.session_state['response'] = response
 
 
-def display_message(user: str, message: Optional[str] = None):
-    """
-    Displays a message either from the User or
-    the Assistant.
-    """
-    # validate user parameter
-    if user not in {"human", "assistant"}:
-        raise ValueError(f"Invalid parameter: {user=}")
-    
-    # check if an empty message is sent
-    if message is None:
-        return
-    
-    # display the message
-    with st.container():
-        with st.chat_message(user):
-            st.markdown(message)
-    return
-
-
-def display_chat_history():
-    if "chat_history" in st.session_state:
-        basic_logger.debug(f"({st.session_state.session_id}): Updating chat history")
-        for idx, message in enumerate(st.session_state.get("chat_history"), start=1):
-            user = "assistant" if idx % 2 == 0 else "human"
-            display_message(user, message.content)
-        return
-
-
-def stream_message(response: Iterator):
-    if response is None:
-        return
-    basic_logger.debug(f"({st.session_state.get("session_id")}): Displaying response from Assistant")
-    with st.container():
-        with st.chat_message("assistant"):
-            st.write_stream(response)
+def clear_chat_history():
+    if st.session_state.get('clear'):
+        st.session_state['langchain_messages'] = list()
+        
+        
+def check_server():
+    url = st.session_state.get('HOST')
+    try:
+        response = requests.head(url)
+        assert response.status_code == 200
+        
+    except Exception as e:
+        st.error("Unable to connect to Ollama Server")
